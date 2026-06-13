@@ -28,7 +28,7 @@ const MOCK_DATA = {
       Producido: true,
       Descripcion: "Delicioso frappé con galleta Oreo, crema batida y jarabe de chocolate premium.",
       ImagenUrl: "https://images.unsplash.com/photo-1572490122747-3968b75cc699?w=800&auto=format&fit=crop&q=80",
-      VideoUrl: "https://assets.mixkit.co/videos/preview/mixkit-pouring-chocolate-sauce-on-ice-cream-42211-large.mp4", // Video directo de prueba
+      VideoUrl: "https://assets.mixkit.co/videos/preview/mixkit-pouring-chocolate-sauce-on-ice-cream-42211-large.mp4",
       EnOferta: false,
       TextoPromocion: "",
       Categoria: "Bebidas Frías"
@@ -59,7 +59,7 @@ const MOCK_DATA = {
     }
   ],
   comerciales: [
-    { ID: "C001", Titulo: "Intro Comercial ZONAZERO", YoutubeUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", Activo: true }, // Reemplazar ID de YT real
+    { ID: "C001", Titulo: "Intro Comercial ZONAZERO", YoutubeUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", Activo: true },
     { ID: "C002", Titulo: "Promo Fin de Semana", YoutubeUrl: "https://www.youtube.com/embed/9bZkp7q19f0", Activo: true }
   ]
 };
@@ -69,36 +69,31 @@ export default function App() {
   const [comerciales, setComerciales] = useState([]);
   const [slogan, setSlogan] = useState("Zero Alcohol, Zero Humo, Zero Broncas");
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
 
   // Estados de Control de Pantalla
   const [layoutMode, setLayoutMode] = useState('grid4'); // 'grid4', 'grid2', 'slider'
-  const [currentSliderIndex, setCurrentSliderIndex] = useState(0);
+  const [currentSliderIndex, setCurrentSliderIndex] = useState(0); 
   const [showCommercial, setShowCommercial] = useState(false);
   const [currentComIndex, setCurrentComIndex] = useState(0);
 
-  // Reloj local en pantalla (Crucial para menús de restaurante/snacks)
   const [time, setTime] = useState(new Date().toLocaleTimeString());
-
-  // Intervalos de Referencia
-  const layoutTimer = useRef(null);
-  const sliderTimer = useRef(null);
   const commercialTriggerTimer = useRef(null);
 
-  // Actualizar hora cada segundo
+  // Reloj local superior
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // Fetch de Datos Real con Fallback al Mock Data
+  // Fetch de datos desde Google Sheets
   useEffect(() => {
     async function fetchData() {
       try {
         const res = await fetch(API_URL);
         const json = await res.json();
         if (json.success) {
-          setProductos(json.productos);
+          const productosActivos = json.productos.filter(p => p.Producido === true || p.Producido === "TRUE" || p.Producido === "true");
+          setProductos(productosActivos);
           setComerciales(json.comerciales);
           setSlogan(json.slogan || slogan);
         } else {
@@ -113,56 +108,49 @@ export default function App() {
       }
     }
     fetchData();
-    // Re-checar base de datos cada 2 minutos en segundo plano por si cambian los precios
     const apiInterval = setInterval(fetchData, 120000);
     return () => clearInterval(apiInterval);
   }, []);
 
-  // Orquestador de Layouts Automáticos
-  // Cambia de Modos de Pantalla para mantener el dinamismo y evitar quemar píxeles en la TV
+  // ORQUESTADOR ÚNICO E INTELIGENTE DE PANTALLA
+  // Controla la paginación y cambia de layout de manera fluida y adaptativa al tamaño del inventario
   useEffect(() => {
-    if (loading || showCommercial) return;
+    if (loading || showCommercial || productos.length === 0) return;
 
-    layoutTimer.current = setInterval(() => {
-      setLayoutMode((prev) => {
-        if (prev === 'grid4') return 'grid2';
-        if (prev === 'grid2') return 'slider';
-        return 'grid4';
-      });
-    }, 30000); // Cambia el tipo de pantalla cada 30 segundos
+    const timer = setTimeout(() => {
+      // Determinamos cuántos productos avanzamos según el modo visual activo
+      const salto_de_pagina = layoutMode === 'grid4' ? 4 : layoutMode === 'grid2' ? 2 : 1;
+      const siguienteIndex = currentSliderIndex + salto_de_pagina;
 
-    return () => clearInterval(layoutTimer.current);
-  }, [loading, showCommercial]);
+      if (siguienteIndex >= productos.length) {
+        // Si el siguiente salto supera el total de productos, significa que ya terminamos de mostrar todo el catálogo en este formato.
+        // Reseteamos el índice a cero y avanzamos al siguiente Layout de la TV de forma limpia.
+        setCurrentSliderIndex(0);
+        setLayoutMode((actualLayout) => {
+          if (actualLayout === 'grid4') return 'grid2';
+          if (actualLayout === 'grid2') return 'slider';
+          return 'grid4';
+        });
+      } else {
+        // Si aún quedan productos por mostrar en esta tanda, avanzamos la página normalmente
+        setCurrentSliderIndex(siguienteIndex);
+      }
+    }, 10000); // Cada página o slide se expone exactamente durante 10 segundos
 
-  // Manejador del Slider Infinito (Cada 10 segundos cambia de producto en modo slider)
-  useEffect(() => {
-    if (layoutMode !== 'slider' || showCommercial) {
-      clearInterval(sliderTimer.current);
-      return;
-    }
+    return () => clearTimeout(timer);
+  }, [currentSliderIndex, layoutMode, productos.length, showCommercial, loading]);
 
-    sliderTimer.current = setInterval(() => {
-      setCurrentSliderIndex((prev) => (prev + 1) % productos.length);
-    }, 10000); // 10 segundos por slide
-
-    return () => clearInterval(sliderTimer.current);
-  }, [layoutMode, productos, showCommercial]);
-
-  // Lanzador de Comerciales a pantalla completa cada 3 minutos
+  // Disparador automático de bloques comerciales cada 3 minutos
   useEffect(() => {
     if (loading || comerciales.length === 0) return;
 
     commercialTriggerTimer.current = setInterval(() => {
       setShowCommercial(true);
-      // Pausar layouts de fondo temporalmente
-      clearInterval(layoutTimer.current);
-      clearInterval(sliderTimer.current);
-    }, 180000); // 3 minutos (180000ms)
+    }, 180000);
 
     return () => clearInterval(commercialTriggerTimer.current);
   }, [loading, comerciales]);
 
-  // Extraer ID de YouTube de cualquier URL provista
   const getYoutubeId = (url) => {
     if (!url) return null;
     const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
@@ -170,17 +158,16 @@ export default function App() {
     return (match && match[2].length === 11) ? match[2] : null;
   };
 
-  // Cuando termina el Comercial (Simulamos duración de 20s para la prueba del Iframe)
   const handleCommercialEnd = () => {
     setShowCommercial(false);
     setCurrentComIndex((prev) => (prev + 1) % comerciales.length);
-    setLayoutMode('grid4'); // Reinicia en cuadrícula estándar
+    setLayoutMode('grid4');
+    setCurrentSliderIndex(0);
   };
 
-  // Escuchador del temporizador para el comercial en reproducción
   useEffect(() => {
     if (!showCommercial) return;
-    const duration = setTimeout(handleCommercialEnd, 20000); // Cada comercial dura 20s expuesto
+    const duration = setTimeout(handleCommercialEnd, 20000);
     return () => clearTimeout(duration);
   }, [showCommercial, currentComIndex]);
 
@@ -197,7 +184,6 @@ export default function App() {
   return (
     <div className="w-screen h-screen overflow-hidden bg-slate-950 text-white select-none relative font-sans">
       
-      {/* MODO COMERCIAL INTERRUPTOR A PANTALLA COMPLETA */}
       {showCommercial && comerciales.length > 0 && (
         <div className="absolute inset-0 bg-black z-50 w-full h-full flex flex-col justify-between">
           <div className="w-full h-full relative">
@@ -214,7 +200,6 @@ export default function App() {
                 <Tv className="w-48 h-48 text-cyan-500 animate-bounce" />
               </div>
             )}
-            {/* Banner Informativo Inferior en Comercial */}
             <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black via-black/80 to-transparent p-12 flex justify-between items-center">
               <div>
                 <span className="bg-red-600 text-white text-2xl font-bold px-6 py-2 rounded-full uppercase tracking-widest animate-pulse">
@@ -225,7 +210,7 @@ export default function App() {
               <div className="text-right">
                 <p className="text-cyan-400 text-3xl font-bold tracking-wider">{slogan}</p>
                 <div className="flex items-center text-slate-400 text-xl justify-end mt-2">
-                  <VolumeX className="w-6 h-6 mr-2 animate-pulse" /> Silenciado por restricciones de TV
+                  <VolumeX className="w-6 h-6 mr-2 animate-pulse" /> Silenciado por TV
                 </div>
               </div>
             </div>
@@ -233,7 +218,6 @@ export default function App() {
         </div>
       )}
 
-      {/* HEADER FIJO SUPERIOR */}
       <header className="h-[12vh] bg-slate-900/90 border-b border-slate-800 flex items-center justify-between px-16 shadow-2xl backdrop-blur-md">
         <div className="flex items-center gap-6">
           <div className="bg-cyan-500 text-slate-950 px-6 py-2 rounded-xl text-4xl font-black tracking-tighter shadow-lg shadow-cyan-500/20">
@@ -245,7 +229,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Indicadores de Modo actuales para monitoreo visual en pruebas */}
         <div className="flex items-center gap-4 bg-slate-950 px-6 py-3 rounded-2xl border border-slate-800">
           <span className={`px-4 py-1.5 rounded-lg font-bold text-lg transition-colors ${layoutMode === 'grid4' ? 'bg-cyan-500 text-slate-950' : 'text-slate-500'}`}>Mesa 2X2</span>
           <span className={`px-4 py-1.5 rounded-lg font-bold text-lg transition-colors ${layoutMode === 'grid2' ? 'bg-amber-500 text-slate-950' : 'text-slate-500'}`}>Destacados</span>
@@ -257,32 +240,30 @@ export default function App() {
         </div>
       </header>
 
-      {/* CONTENEDOR PRINCIPAL DINÁMICO (88vh restante) */}
       <main className="h-[88vh] p-12 bg-slate-950 transition-all duration-1000 ease-in-out">
         
-        {/* LAYOUT 1: CUADRÍCULA 2X2 (Perfecto para explorar menú general) */}
+        {/* LAYOUT 1: CUADRÍCULA 2X2 DINÁMICA */}
         {layoutMode === 'grid4' && (
           <div className="grid grid-cols-2 grid-rows-2 gap-10 h-full w-full animate-fadeIn">
-            {productos.slice(0, 4).map((prod) => (
+            {productos.slice(currentSliderIndex, currentSliderIndex + 4).map((prod) => (
               <ProductCard key={prod.ID} prod={prod} size="normal" />
             ))}
           </div>
         )}
 
-        {/* LAYOUT 2: GRID DE 2 ELEMENTOS (Grandes Promos del Día) */}
+        {/* LAYOUT 2: GRID DE 2 DINÁMICO */}
         {layoutMode === 'grid2' && (
           <div className="grid grid-cols-2 gap-12 h-full w-full animate-fadeIn">
-            {productos.slice(0, 2).map((prod) => (
+            {productos.slice(currentSliderIndex, currentSliderIndex + 2).map((prod) => (
               <ProductCard key={prod.ID} prod={prod} size="mega" />
             ))}
           </div>
         )}
 
-        {/* LAYOUT 3: MODO SLIDER INFRAESTRUCTURA GIGANTE */}
-        {layoutMode === 'slider' && productos.length > 0 && (
+        {/* LAYOUT 3: CARRUSEL INDIVIDUAL COMPLETO (Muestra de 1 en 1 todo el inventario sin cortes) */}
+        {layoutMode === 'slider' && productos.length > 0 && productos[currentSliderIndex] && (
           <div className="h-full w-full animate-fadeIn relative">
             <ProductCard prod={productos[currentSliderIndex]} size="full" />
-            {/* Indicador de barra de progreso visual de cambio de slide */}
             <div className="absolute bottom-4 inset-x-0 h-2 bg-slate-800 rounded-full overflow-hidden mx-12">
               <div key={currentSliderIndex} className="h-full bg-pink-500 animate-progressBar" />
             </div>
@@ -294,9 +275,6 @@ export default function App() {
   );
 }
 
-/**
- * COMPONENTE HIJO ATÓMICO: Tarjeta de Producto Modular de Alta Densidad Visual
- */
 function ProductCard({ prod, size }) {
   const isFull = size === 'full';
   const isMega = size === 'mega';
@@ -306,7 +284,6 @@ function ProductCard({ prod, size }) {
       isFull ? 'flex-row w-full h-full border-pink-500/30' : isMega ? 'flex-col h-full border-amber-500/20' : 'flex-row h-full'
     }`}>
       
-      {/* ETIQUETA EN OFERTA ANIMADA */}
       {prod.EnOferta && (
         <div className="absolute top-6 left-6 z-30 flex items-center gap-2 bg-red-600 text-white font-black text-2xl px-6 py-3 rounded-2xl shadow-xl animate-bounce">
           <Flame className="w-8 h-8 text-yellow-300 fill-yellow-300" />
@@ -314,7 +291,6 @@ function ProductCard({ prod, size }) {
         </div>
       )}
 
-      {/* CONTENEDOR MULTIMEDIA (Video o Imagen en Alta Definición) */}
       <div className={`relative overflow-hidden flex-shrink-0 bg-black ${
         isFull ? 'w-[55%] h-full' : isMega ? 'w-full h-[55%]' : 'w-[40%] h-full'
       }`}>
@@ -337,22 +313,18 @@ function ProductCard({ prod, size }) {
         <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-transparent z-10" />
       </div>
 
-      {/* CONTENEDOR DE CONTENIDO (TÍTULOS, DESCRIPCIONES, PRECIO) */}
       <div className={`flex flex-col justify-between p-10 flex-grow relative z-20 ${isMega ? 'h-[45%]' : 'h-full'}`}>
         <div>
-          {/* Categoría superior */}
           <span className="text-cyan-400 font-extrabold tracking-widest text-xl uppercase bg-slate-900 border border-slate-800 px-4 py-2 rounded-xl inline-block mb-4">
             {prod.Categoria}
           </span>
           
-          {/* Título de Producto Dinámico según tamaño */}
           <h2 className={`font-black tracking-tight text-white ${
             isFull ? 'text-7xl mb-6' : isMega ? 'text-5xl mb-3' : 'text-4xl mb-2'
           }`}>
             {prod.Nombre}
           </h2>
           
-          {/* Descripción */}
           <p className={`text-slate-400 font-medium leading-snug ${
             isFull ? 'text-2xl max-w-2xl' : isMega ? 'text-xl' : 'text-lg line-clamp-2'
           }`}>
@@ -360,7 +332,6 @@ function ProductCard({ prod, size }) {
           </p>
         </div>
 
-        {/* CONTENEDOR DE PRECIO GIGANTE */}
         <div className="flex items-center justify-between border-t border-slate-800/80 pt-6 mt-4">
           <span className="text-slate-500 font-bold uppercase tracking-wider text-lg">Precio Neto</span>
           <div className="flex items-baseline gap-1">
